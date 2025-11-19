@@ -9,6 +9,7 @@ import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import Equipamentos from "./pages/Equipamentos";
+import NovoEquipamento from "./pages/NovoEquipamento"; // <-- import da nova página
 import Agenda from "./pages/Agenda";
 import Logs from "./pages/Logs";
 import NotFound from "./pages/NotFound";
@@ -38,6 +39,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <Equipamentos />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/NovoEquipamento" // <-- nova rota
+              element={
+                <ProtectedRoute>
+                  <NovoEquipamento />
                 </ProtectedRoute>
               }
             />

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { EquipmentCard } from "@/components/equipment/EquipmentCard";
@@ -6,7 +7,7 @@ import { EquipmentFilters } from "@/components/equipment/EquipmentFilters";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -17,13 +18,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+interface ReservationInfo {
+  name: string;
+  placa: string;
+  associado: string;
+  data: string;
+  hora: string;
+}
 
 export default function Equipamentos() {
   const [equipments, setEquipments] = useState<any[]>([]);
@@ -38,9 +41,21 @@ export default function Equipamentos() {
     open: false,
     equipmentId: null,
   });
-  const [reserveName, setReserveName] = useState("");
+  const [reservationInfo, setReservationInfo] = useState<ReservationInfo>({
+    name: "",
+    placa: "",
+    associado: "",
+    data: "",
+    hora: "",
+  });
+  const [removeDialog, setRemoveDialog] = useState<{ open: boolean; equipmentIds: string[] }>({
+    open: false,
+    equipmentIds: [],
+  });
+
   const { isAdmin } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   useEffect(() => {
     fetchData();
@@ -52,21 +67,12 @@ export default function Equipamentos() {
 
   const fetchData = async () => {
     try {
-      // Fetch technicians
-      const { data: techData } = await supabase
-        .from("technicians")
-        .select("*")
-        .order("nome");
-
+      const { data: techData } = await supabase.from("technicians").select("*").order("nome");
       setTechnicians(techData || []);
 
-      // Fetch equipments with technician data
       const { data: equipData, error } = await supabase
         .from("equipments")
-        .select(`
-          *,
-          technician:technicians(nome)
-        `)
+        .select(`*, technician:technicians(nome)`)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
@@ -85,41 +91,32 @@ export default function Equipamentos() {
 
   const filterEquipments = () => {
     let filtered = equipments;
-
-    if (search) {
+    if (search)
       filtered = filtered.filter(
         (e) =>
           e.imei.toLowerCase().includes(search.toLowerCase()) ||
           e.iccid.toLowerCase().includes(search.toLowerCase())
       );
-    }
-
-    if (statusFilter !== "all") {
-      filtered = filtered.filter((e) => e.status === statusFilter);
-    }
-
-    if (empresaFilter !== "all") {
-      filtered = filtered.filter((e) => e.empresa === empresaFilter);
-    }
-
-    if (tecnicoFilter !== "all") {
-      filtered = filtered.filter((e) => e.tecnico_id === tecnicoFilter);
-    }
+    if (statusFilter !== "all") filtered = filtered.filter((e) => e.status === statusFilter);
+    if (empresaFilter !== "all") filtered = filtered.filter((e) => e.empresa === empresaFilter);
+    if (tecnicoFilter !== "all") filtered = filtered.filter((e) => e.tecnico_id === tecnicoFilter);
 
     setFilteredEquipments(filtered);
   };
 
   const handleReserve = (equipmentId: string) => {
     setReserveDialog({ open: true, equipmentId });
-    setReserveName("");
+    setReservationInfo({ name: "", placa: "", associado: "", data: "", hora: "" });
   };
 
   const confirmReserve = async () => {
-    if (!reserveName.trim()) {
+    const { name, placa, associado, data, hora } = reservationInfo;
+
+    if (!name.trim() || !placa.trim() || !associado.trim() || !data.trim() || !hora.trim()) {
       toast({
         variant: "destructive",
-        title: "Nome obrigatório",
-        description: "Por favor, informe seu nome para reservar",
+        title: "Campos obrigatórios",
+        description: "Preencha todos os campos para reservar",
       });
       return;
     }
@@ -128,15 +125,14 @@ export default function Equipamentos() {
 
     try {
       const now = new Date().toISOString();
-      const expirationTime = calculateExpirationTime(new Date());
-
       const { error } = await supabase
         .from("equipments")
         .update({
           status: "reservado",
-          reservado_por: reserveName.trim(),
-          data_reserva: now,
-          remover_apos: expirationTime,
+          reservado_por: name.trim(),
+          placa,
+          associado,
+          data_reserva: `${data}T${hora}:00`,
         })
         .eq("id", reserveDialog.equipmentId);
 
@@ -144,12 +140,15 @@ export default function Equipamentos() {
 
       toast({
         title: "Equipamento reservado",
-        description: "A reserva expira automaticamente no horário indicado",
+        description: "A reserva foi registrada com sucesso",
       });
 
       setReserveDialog({ open: false, equipmentId: null });
-      setReserveName("");
+      setReservationInfo({ name: "", placa: "", associado: "", data: "", hora: "" });
       fetchData();
+
+      // enviar para página de agendamento
+      navigate("/agendamento", { state: { equipmentId: reserveDialog.equipmentId, reservation: reservationInfo } });
     } catch (error) {
       console.error("Error reserving equipment:", error);
       toast({
@@ -167,18 +166,14 @@ export default function Equipamentos() {
         .update({
           status: "disponivel",
           reservado_por: null,
+          placa: null,
+          associado: null,
           data_reserva: null,
-          remover_apos: null,
         })
         .eq("id", equipmentId);
 
       if (error) throw error;
-
-      toast({
-        title: "Equipamento liberado",
-        description: "O equipamento está disponível novamente",
-      });
-
+      toast({ title: "Equipamento liberado" });
       fetchData();
     } catch (error) {
       console.error("Error releasing equipment:", error);
@@ -190,50 +185,28 @@ export default function Equipamentos() {
     }
   };
 
-  const handleMarkUsed = async (equipmentId: string) => {
+  const handleClearSelection = async () => {
     try {
-      const { error } = await supabase
-        .from("equipments")
-        .update({
-          status: "utilizado",
-          reservado_por: null,
-          data_reserva: null,
-          remover_apos: null,
-        })
-        .eq("id", equipmentId);
-
+      const { error } = await supabase.from("equipments").update({ status: "disponivel", reservado_por: null, placa: null, associado: null, data_reserva: null });
       if (error) throw error;
-
-      toast({
-        title: "Equipamento marcado como utilizado",
-      });
-
+      toast({ title: "Todas as reservas foram removidas" });
       fetchData();
     } catch (error) {
-      console.error("Error marking as used:", error);
-      toast({
-        variant: "destructive",
-        title: "Erro ao atualizar",
-        description: "Tente novamente mais tarde",
-      });
+      console.error("Error clearing selection:", error);
     }
   };
 
-  const calculateExpirationTime = (reservationTime: Date): string => {
-    const hour = reservationTime.getHours();
-    const date = new Date(reservationTime);
-    date.setMinutes(0);
-    date.setSeconds(0);
-    date.setMilliseconds(0);
-
-    if (hour < 17) {
-      date.setHours(17);
-    } else {
-      date.setDate(date.getDate() + 1);
-      date.setHours(17);
+  const handleRemoveEquipments = async () => {
+    try {
+      if (removeDialog.equipmentIds.length === 0) return;
+      const { error } = await supabase.from("equipments").delete().in("id", removeDialog.equipmentIds);
+      if (error) throw error;
+      toast({ title: "Equipamentos removidos com sucesso" });
+      setRemoveDialog({ open: false, equipmentIds: [] });
+      fetchData();
+    } catch (error) {
+      console.error("Error removing equipments:", error);
     }
-
-    return date.toISOString();
   };
 
   return (
@@ -242,15 +215,22 @@ export default function Equipamentos() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Equipamentos</h1>
-            <p className="text-muted-foreground mt-1">
-              Gerencie o estoque de equipamentos
-            </p>
+            <p className="text-muted-foreground mt-1">Gerencie o estoque de equipamentos</p>
           </div>
           {isAdmin && (
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              Adicionar Equipamento
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={() => navigate("/NovoEquipamento")}>
+                <Plus className="mr-2 h-4 w-4" />
+                Adicionar Equipamento
+              </Button>
+              <Button variant="destructive" onClick={handleClearSelection}>
+                Limpar Seleção
+              </Button>
+              <Button variant="outline" onClick={() => setRemoveDialog({ open: true, equipmentIds: [] })}>
+                <Trash2 className="mr-2 h-4 w-4" />
+                Remover Equipamentos
+              </Button>
+            </div>
           )}
         </div>
 
@@ -280,8 +260,14 @@ export default function Equipamentos() {
                 equipment={equipment}
                 onReserve={handleReserve}
                 onRelease={handleRelease}
-                onMarkUsed={handleMarkUsed}
                 isAdmin={isAdmin}
+                cardStatusColor={
+                  equipment.status === "reservado"
+                    ? "bg-yellow-300"
+                    : equipment.empresa === "ALO"
+                    ? "bg-green-900 text-white"
+                    : undefined
+                }
               />
             ))}
           </div>
@@ -294,30 +280,61 @@ export default function Equipamentos() {
         )}
       </div>
 
+      {/* Reserva Dialog */}
       <Dialog open={reserveDialog.open} onOpenChange={(open) => setReserveDialog({ open, equipmentId: null })}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Reservar Equipamento</DialogTitle>
-            <DialogDescription>
-              Informe seu nome para reservar este equipamento. A reserva expirará automaticamente.
-            </DialogDescription>
+            <DialogDescription>Preencha todas as informações para reservar.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="reserve-name">Seu Nome</Label>
-              <Input
-                id="reserve-name"
-                placeholder="Digite seu nome completo"
-                value={reserveName}
-                onChange={(e) => setReserveName(e.target.value)}
-              />
+              <Label htmlFor="name">Nome</Label>
+              <Input id="name" value={reservationInfo.name} onChange={(e) => setReservationInfo({ ...reservationInfo, name: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="placa">Placa</Label>
+              <Input id="placa" value={reservationInfo.placa} onChange={(e) => setReservationInfo({ ...reservationInfo, placa: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="associado">Nome Associado</Label>
+              <Input id="associado" value={reservationInfo.associado} onChange={(e) => setReservationInfo({ ...reservationInfo, associado: e.target.value })} />
+            </div>
+            <div className="flex gap-2">
+              <div className="space-y-2 flex-1">
+                <Label htmlFor="data">Data</Label>
+                <Input type="date" id="data" value={reservationInfo.data} onChange={(e) => setReservationInfo({ ...reservationInfo, data: e.target.value })} />
+              </div>
+              <div className="space-y-2 flex-1">
+                <Label htmlFor="hora">Hora</Label>
+                <Input type="time" id="hora" value={reservationInfo.hora} onChange={(e) => setReservationInfo({ ...reservationInfo, hora: e.target.value })} />
+              </div>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setReserveDialog({ open: false, equipmentId: null })}>
-              Cancelar
-            </Button>
+            <Button variant="outline" onClick={() => setReserveDialog({ open: false, equipmentId: null })}>Cancelar</Button>
             <Button onClick={confirmReserve}>Confirmar Reserva</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Remover Equipamentos Dialog */}
+      <Dialog open={removeDialog.open} onOpenChange={(open) => setRemoveDialog({ open, equipmentIds: [] })}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remover Equipamentos</DialogTitle>
+            <DialogDescription>Informe os IDs dos equipamentos que deseja remover, separados por vírgula.</DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Input
+              placeholder="Ex: id1,id2,id3"
+              value={removeDialog.equipmentIds.join(",")}
+              onChange={(e) => setRemoveDialog({ ...removeDialog, equipmentIds: e.target.value.split(",") })}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoveDialog({ open: false, equipmentIds: [] })}>Cancelar</Button>
+            <Button variant="destructive" onClick={handleRemoveEquipments}>Remover</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
