@@ -1,16 +1,32 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  ReactNode,
+} from "react";
 import { useNavigate } from "react-router-dom";
 
-import { auth, db } from "../lib/firebase";
+import { auth, db } from "@/lib/firebase";
+
 import {
   User as FirebaseUser,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut as firebaseSignOut,
+  onAuthStateChanged,
 } from "firebase/auth";
 
-import { doc, getDoc, setDoc, collection, query, where, getDocs } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  getDocFromCache,
+  setDoc,
+} from "firebase/firestore";
 
+/* ----------------------------------------------------------------------------
+ * Tipagem do profile
+ * --------------------------------------------------------------------------*/
 interface Profile {
   id: string;
   email: string;
@@ -25,11 +41,17 @@ interface AuthContextType {
   profile: Profile | null;
   loading: boolean;
   isAdmin: boolean;
-  signIn: (login: string, password: string) => Promise<void>;
-  signUp: (nome: string, username: string, email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<void>;
+  signUp: (
+    nome: string,
+    username: string,
+    email: string,
+    password: string
+  ) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
+const ADMIN_EMAIL = "lucasmateus.lima@outlook.com";
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -39,8 +61,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const navigate = useNavigate();
 
+  /* ----------------------------------------------------------------------------
+   * OBSERVA AUTOMATICAMENTE LOGIN / LOGOUT
+   * --------------------------------------------------------------------------*/
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged(async (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
 
       if (firebaseUser) {
@@ -51,64 +76,100 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    return () => unsubscribe();
+    return unsubscribe;
   }, []);
 
+  /* ----------------------------------------------------------------------------
+   * BUSCA O PERFIL DO FIRESTORE (COM FALLBACK REAL PARA CACHE)
+   * --------------------------------------------------------------------------*/
   const fetchProfile = async (uid: string) => {
     try {
       const docRef = doc(db, "users", uid);
-      const docSnap = await getDoc(docRef);
 
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setProfile({
-          id: data.id,
-          email: data.email,
-          username: data.username,
-          nome: data.nome,
-          role: data.role,
-          created_at: data.created_at.toDate ? data.created_at.toDate() : data.created_at,
-        });
+      let snap;
+
+      try {
+        // tenta servidor normalmente
+        snap = await getDoc(docRef);
+      } catch (e) {
+        console.warn("Servidor offline, tentando cache…");
+        try {
+          // fallback real
+          snap = await getDocFromCache(docRef);
+        } catch {
+          console.error("Nem servidor nem cache funcionaram.");
+          return;
+        }
       }
+
+      if (!snap.exists()) return;
+
+      const data = snap.data();
+
+      setProfile({
+        id: data.id,
+        email: data.email,
+        username: data.username,
+        nome: data.nome,
+        role: data.role,
+        created_at: data.created_at?.toDate?.() || new Date(),
+      });
     } catch (err) {
-      console.error("Erro ao buscar profile:", err);
+      console.error("Erro ao buscar perfil:", err);
     } finally {
       setLoading(false);
     }
   };
 
-  const signIn = async (login: string, password: string) => {
+  /* ----------------------------------------------------------------------------
+   * LOGIN
+   * --------------------------------------------------------------------------*/
+  const signIn = async (email: string, password: string) => {
     setLoading(true);
     try {
-      let email = login;
+      const credential = await signInWithEmailAndPassword(
+        auth,
+        email,
+        password
+      );
 
-      if (!login.includes("@")) {
-        // login é username → busca email
-        const q = query(collection(db, "users"), where("username", "==", login));
-        const result = await getDocs(q);
-
-        if (result.empty) throw new Error("Usuário não encontrado.");
-        email = result.docs[0].data().email;
-      }
-
-      const credential = await signInWithEmailAndPassword(auth, email, password);
       await fetchProfile(credential.user.uid);
 
       navigate("/dashboard");
-    } catch (err: any) {
-      throw new Error(err?.message || "Erro ao entrar");
+    } catch (err) {
+      console.error("Login error:", err);
+      throw new Error("Credenciais inválidas.");
     } finally {
       setLoading(false);
     }
   };
 
-  const signUp = async (nome: string, username: string, email: string, password: string) => {
+  /* ----------------------------------------------------------------------------
+   * CADASTRO (admin tem delay de 1500ms para garantir gravação)
+   * --------------------------------------------------------------------------*/
+  const signUp = async (
+    nome: string,
+    username: string,
+    email: string,
+    password: string
+  ) => {
     setLoading(true);
+
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        email,
+        password
+      );
+
       const uid = userCredential.user.uid;
 
-      const role: "admin" | "consultor" = username === "lucasmateusli" ? "admin" : "consultor";
+      const isAdmin = email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+      const role: "admin" | "consultor" = isAdmin ? "admin" : "consultor";
+
+      if (isAdmin) {
+        await new Promise((resolve) => setTimeout(resolve, 1500)); // delay admin
+      }
 
       await setDoc(doc(db, "users", uid), {
         id: uid,
@@ -121,13 +182,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       await fetchProfile(uid);
       navigate("/dashboard");
-    } catch (err: any) {
-      throw new Error(err?.message || "Erro ao criar conta");
+    } catch (err) {
+      console.error("Signup error:", err);
+      throw new Error("Erro ao criar conta.");
     } finally {
       setLoading(false);
     }
   };
 
+  /* ----------------------------------------------------------------------------
+   * LOGOUT
+   * --------------------------------------------------------------------------*/
   const signOut = async () => {
     setLoading(true);
     try {
@@ -163,6 +228,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (!context) throw new Error("useAuth must be used within AuthProvider");
+  if (!context)
+    throw new Error("useAuth deve ser usado dentro de AuthProvider");
   return context;
 }

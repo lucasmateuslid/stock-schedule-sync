@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Calendar, Clock } from "lucide-react";
+
+// 🔥 Firebase
+// 🔥 Firebase (corrigido)
+import { db } from "/src/lib/firebase";
+import { collection, getDocs, doc, getDoc, orderBy, query } from "firebase/firestore";
 
 interface ReservationInfo {
   name: string;
@@ -19,6 +23,7 @@ interface ReservationInfo {
 export default function Agendamento() {
   const location = useLocation();
   const reservation = location.state?.reservation as ReservationInfo | undefined;
+
   const [agendaItems, setAgendaItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -28,13 +33,30 @@ export default function Agendamento() {
 
   const fetchAgenda = async () => {
     try {
-      const { data, error } = await supabase
-        .from("agenda")
-        .select(`*, technician:technicians(nome)`)
-        .order("inicio", { ascending: true });
+      const q = query(collection(db, "agenda"), orderBy("inicio", "asc"));
+      const snapshot = await getDocs(q);
 
-      if (error) throw error;
-      setAgendaItems(data || []);
+      const agendaData: any[] = [];
+
+      for (const docSnap of snapshot.docs) {
+        const item = docSnap.data();
+
+        // 🔎 Buscar nome do técnico
+        let technicianData = null;
+        if (item.technicianId) {
+          const techRef = doc(db, "technicians", item.technicianId);
+          const techSnap = await getDoc(techRef);
+          technicianData = techSnap.exists() ? techSnap.data() : null;
+        }
+
+        agendaData.push({
+          id: docSnap.id,
+          ...item,
+          technician: technicianData,
+        });
+      }
+
+      setAgendaItems(agendaData);
     } catch (error) {
       console.error("Error fetching agenda:", error);
     } finally {
@@ -59,7 +81,7 @@ export default function Agendamento() {
           </p>
         </div>
 
-        {/* Se houver reserva de equipamento enviada */}
+        {/* Se houver reserva enviada */}
         {reservation && (
           <Card className="border-yellow-400 bg-yellow-100">
             <CardHeader>
@@ -75,7 +97,7 @@ export default function Agendamento() {
           </Card>
         )}
 
-        {/* Lista de agenda do Supabase */}
+        {/* Lista da agenda */}
         {loading ? (
           <div className="space-y-4">
             {[...Array(5)].map((_, i) => (
@@ -105,6 +127,7 @@ export default function Agendamento() {
                       </CardTitle>
                       <p className="text-sm text-muted-foreground">{item.motivo}</p>
                     </div>
+
                     {isEventActive(item.inicio, item.fim) ? (
                       <Badge className="bg-destructive">Em Andamento</Badge>
                     ) : new Date(item.fim) < new Date() ? (
@@ -114,6 +137,7 @@ export default function Agendamento() {
                     )}
                   </div>
                 </CardHeader>
+
                 <CardContent>
                   <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
                     <div className="flex items-center gap-2">
@@ -122,6 +146,7 @@ export default function Agendamento() {
                         {format(new Date(item.inicio), "dd/MM/yyyy", { locale: ptBR })}
                       </span>
                     </div>
+
                     <div className="flex items-center gap-2">
                       <Clock className="h-4 w-4" />
                       <span>

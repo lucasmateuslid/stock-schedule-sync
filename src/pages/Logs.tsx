@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -8,6 +7,11 @@ import { ptBR } from "date-fns/locale";
 import { Shield, User, Calendar } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Navigate } from "react-router-dom";
+
+// 🔥 Firebase corrigido
+import { db } from "/src/lib/firebase";
+
+import { collection, getDocs, query, orderBy, limit, doc, getDoc } from "firebase/firestore";
 
 export default function Logs() {
   const [logs, setLogs] = useState<any[]>([]);
@@ -22,17 +26,29 @@ export default function Logs() {
 
   const fetchLogs = async () => {
     try {
-      const { data, error } = await supabase
-        .from("audit_logs")
-        .select(`
-          *,
-          equipment:equipments(imei, iccid)
-        `)
-        .order("created_at", { ascending: false })
-        .limit(50);
+      const logsRef = collection(db, "audit_logs");
+      const q = query(logsRef, orderBy("created_at", "desc"), limit(50));
+      const snapshot = await getDocs(q);
 
-      if (error) throw error;
-      setLogs(data || []);
+      const logsData: any[] = [];
+
+      for (const logDoc of snapshot.docs) {
+        const log = { id: logDoc.id, ...logDoc.data() };
+
+        // Buscar equipamento relacionado
+        if (log.equipment_id) {
+          const equipRef = doc(db, "equipments", log.equipment_id);
+          const equipSnap = await getDoc(equipRef);
+
+          if (equipSnap.exists()) {
+            log.equipment = equipSnap.data();
+          }
+        }
+
+        logsData.push(log);
+      }
+
+      setLogs(logsData);
     } catch (error) {
       console.error("Error fetching logs:", error);
     } finally {
@@ -95,23 +111,27 @@ export default function Logs() {
                       <CardTitle className="text-base font-medium">
                         {getActionLabel(log.action_type)}
                       </CardTitle>
+
                       {log.equipment && (
                         <p className="text-sm text-muted-foreground font-mono">
                           IMEI: {log.equipment.imei}
                         </p>
                       )}
                     </div>
+
                     <Badge className={getActionColor(log.action_type)}>
                       {log.action_type}
                     </Badge>
                   </div>
                 </CardHeader>
+
                 <CardContent>
                   <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
                     <div className="flex items-center gap-2">
                       <User className="h-4 w-4" />
                       <span>ID do Usuário: {log.user_id || "Sistema"}</span>
                     </div>
+
                     <div className="flex items-center gap-2">
                       <Calendar className="h-4 w-4" />
                       <span>

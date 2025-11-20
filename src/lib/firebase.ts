@@ -1,23 +1,39 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
-import { getAnalytics } from "firebase/analytics";
 
-// Configuração do Firebase
+console.log("ENV DEBUG:", {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  domain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  project: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+});
+
+
+// Config via .env
 const firebaseConfig = {
-  apiKey: "AIzaSyD4FcnpGBZ5UNGv0QyJCelOrE4stGonYdY",
-  authDomain: "eqpstorage.firebaseapp.com",
-  projectId: "eqpstorage",
-  storageBucket: "eqpstorage.firebasestorage.app",
-  messagingSenderId: "767875128346",
-  appId: "1:767875128346:web:23c4d029e3236f1a44c5a3",
-  measurementId: "G-F4JPZHVDED",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
 // Inicializa Firebase
 const app = initializeApp(firebaseConfig);
 
-// Exporta os serviços que você precisa
+// Auth + Firestore
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-export const analytics = getAnalytics(app);
+
+// Analytics (opcional) – sem await no topo e sem travar Firestore
+export let analytics: any = null;
+
+if (typeof window !== "undefined" && firebaseConfig.measurementId) {
+  import("firebase/analytics").then(({ getAnalytics, isSupported }) => {
+    isSupported().then((ok) => {
+      if (ok) analytics = getAnalytics(app);
+    });
+  });
+}

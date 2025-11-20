@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+
 import {
   Select,
   SelectContent,
@@ -15,6 +15,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+import {
+  collection,
+  getDocs,
+  addDoc,
+  query,
+  orderBy,
+} from "firebase/firestore";
+
+import { db } from "/src/lib/firebase";
+
 export default function NovoEquipamento() {
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
@@ -22,7 +32,7 @@ export default function NovoEquipamento() {
 
   const [technicians, setTechnicians] = useState<any[]>([]);
   const [empresa, setEmpresa] = useState<"LOCK" | "ALO">("LOCK");
-  const [tecnico, setTecnico] = useState<string | "">("");
+  const [tecnico, setTecnico] = useState<string>("");
   const [bulkText, setBulkText] = useState("");
   const [loading, setLoading] = useState(false);
   const [invalidLines, setInvalidLines] = useState<number[]>([]);
@@ -40,21 +50,21 @@ export default function NovoEquipamento() {
     }
   }, [isAdmin]);
 
+  // 🔥 Buscar técnicos do Firestore
   const fetchTechnicians = async () => {
-    const { data, error } = await supabase
-      .from("technicians")
-      .select("*")
-      .order("nome");
+    try {
+      const q = query(collection(db, "technicians"), orderBy("nome"));
+      const snapshot = await getDocs(q);
 
-    if (error) {
+      const list = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      setTechnicians(list);
+    } catch (error) {
       console.error("Erro ao buscar técnicos:", error);
       toast({
         variant: "destructive",
         title: "Erro",
         description: "Não foi possível carregar os técnicos",
       });
-    } else {
-      setTechnicians(data || []);
     }
   };
 
@@ -80,19 +90,18 @@ export default function NovoEquipamento() {
       const duplicateCheck: Record<string, number> = {};
       const invalid: number[] = [];
 
-      const equipmentsToInsert = [];
+      const equipmentsToInsert: any[] = [];
 
-      // Buscar IMEIs e ICCIDs já existentes
-      const { data: existing, error: fetchError } = await supabase
-        .from("equipments")
-        .select("imei, iccid");
+      // 🔥 Buscar IMEIs + ICCIDs existentes
+      const snapshot = await getDocs(collection(db, "equipments"));
 
-      if (fetchError) throw fetchError;
+      const existingImei = new Set(
+        snapshot.docs.map((d) => d.data().imei).filter(Boolean)
+      );
 
-      const existingSet = new Set([
-        ...(existing?.map((e) => e.imei) || []),
-        ...(existing?.map((e) => e.iccid) || []),
-      ]);
+      const existingIccid = new Set(
+        snapshot.docs.map((d) => d.data().iccid).filter(Boolean)
+      );
 
       lines.forEach((line, index) => {
         const [imei, iccid] = line.split(",").map((v) => v.trim());
@@ -102,11 +111,13 @@ export default function NovoEquipamento() {
           return;
         }
 
-        if (existingSet.has(imei) || existingSet.has(iccid)) {
+        // IMEI ou ICCID já cadastrados
+        if (existingImei.has(imei) || existingIccid.has(iccid)) {
           invalid.push(index + 1);
           return;
         }
 
+        // Duplicado no próprio batch
         if (duplicateCheck[imei] || duplicateCheck[iccid]) {
           invalid.push(index + 1);
           return;
@@ -120,6 +131,7 @@ export default function NovoEquipamento() {
           iccid,
           empresa,
           tecnico_id: tecnico || null,
+          created_at: new Date(),
         });
       });
 
@@ -134,11 +146,10 @@ export default function NovoEquipamento() {
         return;
       }
 
-      const { error } = await supabase
-        .from("equipments")
-        .insert(equipmentsToInsert);
-
-      if (error) throw error;
+      // 🔥 Inserção em massa
+      for (const eq of equipmentsToInsert) {
+        await addDoc(collection(db, "equipments"), eq);
+      }
 
       toast({
         title: "Equipamentos cadastrados",
@@ -163,13 +174,14 @@ export default function NovoEquipamento() {
       <div className="max-w-3xl mx-auto py-10 space-y-6">
         <h1 className="text-3xl font-bold tracking-tight">Novo Equipamento</h1>
         <p className="text-muted-foreground">
-          Cadastre equipamentos individualmente ou em massa. Cada linha deve
-          conter: <strong>IMEI, ICCID</strong> separados por vírgula.
+          Cadastre equipamentos individualmente ou em massa.
+          Cada linha deve conter: <strong>IMEI, ICCID</strong>
         </p>
 
         <div className="space-y-4">
+          {/* EMPRESA */}
           <div className="space-y-2">
-            <Label htmlFor="empresa">Empresa</Label>
+            <Label>Empresa</Label>
             <Select value={empresa} onValueChange={(v) => setEmpresa(v as any)}>
               <SelectTrigger>
                 <SelectValue placeholder="Selecione a empresa" />
@@ -181,8 +193,9 @@ export default function NovoEquipamento() {
             </Select>
           </div>
 
+          {/* TÉCNICO */}
           <div className="space-y-2">
-            <Label htmlFor="tecnico">Técnico (opcional)</Label>
+            <Label>Técnico (opcional)</Label>
             <Select value={tecnico} onValueChange={(v) => setTecnico(v)}>
               <SelectTrigger>
                 <SelectValue placeholder="Selecione o técnico" />
@@ -197,14 +210,12 @@ export default function NovoEquipamento() {
             </Select>
           </div>
 
+          {/* TEXTO EM MASSA */}
           <div className="space-y-2">
-            <Label htmlFor="bulk">IMEI, ICCID (uma linha por equipamento)</Label>
+            <Label>IMEI, ICCID (uma linha por equipamento)</Label>
             <Textarea
-              id="bulk"
-              className={`${invalidLines.length > 0 ? "border-red-500" : ""}`}
-              placeholder={`Exemplo:
-863238076524042,8955680000000657525
-860828080191391,8955680000000657526`}
+              className={invalidLines.length > 0 ? "border-red-500" : ""}
+              placeholder={`Exemplo:\n863238076524042,8955680000000657525\n860828080191391,8955680000000657526`}
               value={bulkText}
               onChange={(e) => setBulkText(e.target.value)}
               rows={10}
@@ -216,6 +227,7 @@ export default function NovoEquipamento() {
             )}
           </div>
 
+          {/* BOTÕES */}
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => navigate("/equipamentos")}>
               Cancelar

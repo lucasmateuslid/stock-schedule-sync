@@ -4,7 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Package, CheckCircle, Clock, AlertCircle } from "lucide-react";
 
 import { collection, getDocs } from "firebase/firestore";
-import { db } from "@/firebase"; // ⬅️ importa seu firebase
+// 🔥 Firebase (corrigido)
+import { db } from "/src/lib/firebase";
 
 export default function Dashboard() {
   const [stats, setStats] = useState({

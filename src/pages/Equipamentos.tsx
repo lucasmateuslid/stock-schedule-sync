@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { firebaseDb } from "@/integrations/firebaseClient"; // Firestore client
-import { collection, getDocs, query, orderBy, doc, updateDoc, deleteDoc } from "firebase/firestore";
+import { db } from "/src/lib/firebase"; // Firestore client corrigido
+import {
+  collection,
+  getDocs,
+  query,
+  orderBy,
+  doc,
+  updateDoc,
+  deleteDoc,
+} from "firebase/firestore";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { EquipmentCard } from "@/components/equipment/EquipmentCard";
 import { EquipmentFilters } from "@/components/equipment/EquipmentFilters";
@@ -37,9 +45,21 @@ export default function Equipamentos() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [empresaFilter, setEmpresaFilter] = useState("all");
   const [tecnicoFilter, setTecnicoFilter] = useState("all");
-  const [reserveDialog, setReserveDialog] = useState<{ open: boolean; equipmentId: string | null }>({ open: false, equipmentId: null });
-  const [reservationInfo, setReservationInfo] = useState<ReservationInfo>({ name: "", placa: "", associado: "", data: "", hora: "" });
-  const [removeDialog, setRemoveDialog] = useState<{ open: boolean; equipmentIds: string[] }>({ open: false, equipmentIds: [] });
+  const [reserveDialog, setReserveDialog] = useState<{
+    open: boolean;
+    equipmentId: string | null;
+  }>({ open: false, equipmentId: null });
+  const [reservationInfo, setReservationInfo] = useState<ReservationInfo>({
+    name: "",
+    placa: "",
+    associado: "",
+    data: "",
+    hora: "",
+  });
+  const [removeDialog, setRemoveDialog] = useState<{
+    open: boolean;
+    equipmentIds: string[];
+  }>({ open: false, equipmentIds: [] });
 
   const { isAdmin } = useAuth();
   const { toast } = useToast();
@@ -57,17 +77,31 @@ export default function Equipamentos() {
     setLoading(true);
     try {
       // Buscar técnicos
-      const techSnapshot = await getDocs(query(collection(firebaseDb, "technicians"), orderBy("nome")));
-      const techData = techSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const techSnapshot = await getDocs(
+        query(collection(db, "technicians"), orderBy("nome"))
+      );
+      const techData = techSnapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
       setTechnicians(techData);
 
       // Buscar equipamentos
-      const equipSnapshot = await getDocs(query(collection(firebaseDb, "equipments"), orderBy("created_at", "desc")));
-      const equipData = equipSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const equipSnapshot = await getDocs(
+        query(collection(db, "equipments"), orderBy("created_at", "desc"))
+      );
+      const equipData = equipSnapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
       setEquipments(equipData);
     } catch (error) {
       console.error("Error fetching data:", error);
-      toast({ variant: "destructive", title: "Erro ao carregar dados", description: "Tente novamente mais tarde" });
+      toast({
+        variant: "destructive",
+        title: "Erro ao carregar dados",
+        description: "Tente novamente mais tarde",
+      });
     } finally {
       setLoading(false);
     }
@@ -81,28 +115,41 @@ export default function Equipamentos() {
           e.imei?.toLowerCase().includes(search.toLowerCase()) ||
           e.iccid?.toLowerCase().includes(search.toLowerCase())
       );
-    if (statusFilter !== "all") filtered = filtered.filter((e) => e.status === statusFilter);
-    if (empresaFilter !== "all") filtered = filtered.filter((e) => e.empresa === empresaFilter);
-    if (tecnicoFilter !== "all") filtered = filtered.filter((e) => e.tecnico_id === tecnicoFilter);
+    if (statusFilter !== "all")
+      filtered = filtered.filter((e) => e.status === statusFilter);
+    if (empresaFilter !== "all")
+      filtered = filtered.filter((e) => e.empresa === empresaFilter);
+    if (tecnicoFilter !== "all")
+      filtered = filtered.filter((e) => e.tecnico_id === tecnicoFilter);
 
     setFilteredEquipments(filtered);
   };
 
   const handleReserve = (equipmentId: string) => {
     setReserveDialog({ open: true, equipmentId });
-    setReservationInfo({ name: "", placa: "", associado: "", data: "", hora: "" });
+    setReservationInfo({
+      name: "",
+      placa: "",
+      associado: "",
+      data: "",
+      hora: "",
+    });
   };
 
   const confirmReserve = async () => {
     const { name, placa, associado, data, hora } = reservationInfo;
     if (!reserveDialog.equipmentId) return;
     if (!name || !placa || !associado || !data || !hora) {
-      toast({ variant: "destructive", title: "Campos obrigatórios", description: "Preencha todos os campos para reservar" });
+      toast({
+        variant: "destructive",
+        title: "Campos obrigatórios",
+        description: "Preencha todos os campos para reservar",
+      });
       return;
     }
 
     try {
-      const equipmentRef = doc(firebaseDb, "equipments", reserveDialog.equipmentId);
+      const equipmentRef = doc(db, "equipments", reserveDialog.equipmentId);
       await updateDoc(equipmentRef, {
         status: "reservado",
         reservado_por: name.trim(),
@@ -111,21 +158,36 @@ export default function Equipamentos() {
         data_reserva: `${data}T${hora}:00`,
       });
 
-      toast({ title: "Equipamento reservado", description: "A reserva foi registrada com sucesso" });
+      toast({
+        title: "Equipamento reservado",
+        description: "A reserva foi registrada com sucesso",
+      });
       setReserveDialog({ open: false, equipmentId: null });
-      setReservationInfo({ name: "", placa: "", associado: "", data: "", hora: "" });
+      setReservationInfo({
+        name: "",
+        placa: "",
+        associado: "",
+        data: "",
+        hora: "",
+      });
       fetchData();
 
-      navigate("/agendamento", { state: { equipmentId: reserveDialog.equipmentId, reservation: reservationInfo } });
+      navigate("/agendamento", {
+        state: { equipmentId: reserveDialog.equipmentId, reservation: reservationInfo },
+      });
     } catch (error) {
       console.error("Error reserving equipment:", error);
-      toast({ variant: "destructive", title: "Erro ao reservar", description: "Tente novamente mais tarde" });
+      toast({
+        variant: "destructive",
+        title: "Erro ao reservar",
+        description: "Tente novamente mais tarde",
+      });
     }
   };
 
   const handleRelease = async (equipmentId: string) => {
     try {
-      const equipmentRef = doc(firebaseDb, "equipments", equipmentId);
+      const equipmentRef = doc(db, "equipments", equipmentId);
       await updateDoc(equipmentRef, {
         status: "disponivel",
         reservado_por: null,
@@ -137,14 +199,26 @@ export default function Equipamentos() {
       fetchData();
     } catch (error) {
       console.error("Error releasing equipment:", error);
-      toast({ variant: "destructive", title: "Erro ao liberar", description: "Tente novamente mais tarde" });
+      toast({
+        variant: "destructive",
+        title: "Erro ao liberar",
+        description: "Tente novamente mais tarde",
+      });
     }
   };
 
   const handleClearSelection = async () => {
     try {
-      const equipSnapshot = await getDocs(collection(firebaseDb, "equipments"));
-      const batchPromises = equipSnapshot.docs.map((d) => updateDoc(d.ref, { status: "disponivel", reservado_por: null, placa: null, associado: null, data_reserva: null }));
+      const equipSnapshot = await getDocs(collection(db, "equipments"));
+      const batchPromises = equipSnapshot.docs.map((d) =>
+        updateDoc(d.ref, {
+          status: "disponivel",
+          reservado_por: null,
+          placa: null,
+          associado: null,
+          data_reserva: null,
+        })
+      );
       await Promise.all(batchPromises);
       toast({ title: "Todas as reservas foram removidas" });
       fetchData();
@@ -156,7 +230,9 @@ export default function Equipamentos() {
   const handleRemoveEquipments = async () => {
     try {
       if (removeDialog.equipmentIds.length === 0) return;
-      const batchPromises = removeDialog.equipmentIds.map((id) => deleteDoc(doc(firebaseDb, "equipments", id)));
+      const batchPromises = removeDialog.equipmentIds.map((id) =>
+        deleteDoc(doc(db, "equipments", id))
+      );
       await Promise.all(batchPromises);
       toast({ title: "Equipamentos removidos com sucesso" });
       setRemoveDialog({ open: false, equipmentIds: [] });
@@ -172,7 +248,9 @@ export default function Equipamentos() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Equipamentos</h1>
-            <p className="text-muted-foreground mt-1">Gerencie o estoque de equipamentos</p>
+            <p className="text-muted-foreground mt-1">
+              Gerencie o estoque de equipamentos
+            </p>
           </div>
           {isAdmin && (
             <div className="flex gap-2">
@@ -183,7 +261,10 @@ export default function Equipamentos() {
               <Button variant="destructive" onClick={handleClearSelection}>
                 Limpar Seleção
               </Button>
-              <Button variant="outline" onClick={() => setRemoveDialog({ open: true, equipmentIds: [] })}>
+              <Button
+                variant="outline"
+                onClick={() => setRemoveDialog({ open: true, equipmentIds: [] })}
+              >
                 <Trash2 className="mr-2 h-4 w-4" />
                 Remover Equipamentos
               </Button>
@@ -238,60 +319,143 @@ export default function Equipamentos() {
       </div>
 
       {/* Reserva Dialog */}
-      <Dialog open={reserveDialog.open} onOpenChange={(open) => setReserveDialog({ open, equipmentId: null })}>
+      <Dialog
+        open={reserveDialog.open}
+        onOpenChange={(open) =>
+          setReserveDialog({ open, equipmentId: null })
+        }
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Reservar Equipamento</DialogTitle>
-            <DialogDescription>Preencha todas as informações para reservar.</DialogDescription>
+            <DialogDescription>
+              Preencha todas as informações para reservar.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="name">Nome</Label>
-              <Input id="name" value={reservationInfo.name} onChange={(e) => setReservationInfo({ ...reservationInfo, name: e.target.value })} />
+              <Input
+                id="name"
+                value={reservationInfo.name}
+                onChange={(e) =>
+                  setReservationInfo({
+                    ...reservationInfo,
+                    name: e.target.value,
+                  })
+                }
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="placa">Placa</Label>
-              <Input id="placa" value={reservationInfo.placa} onChange={(e) => setReservationInfo({ ...reservationInfo, placa: e.target.value })} />
+              <Input
+                id="placa"
+                value={reservationInfo.placa}
+                onChange={(e) =>
+                  setReservationInfo({
+                    ...reservationInfo,
+                    placa: e.target.value,
+                  })
+                }
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="associado">Nome Associado</Label>
-              <Input id="associado" value={reservationInfo.associado} onChange={(e) => setReservationInfo({ ...reservationInfo, associado: e.target.value })} />
+              <Input
+                id="associado"
+                value={reservationInfo.associado}
+                onChange={(e) =>
+                  setReservationInfo({
+                    ...reservationInfo,
+                    associado: e.target.value,
+                  })
+                }
+              />
             </div>
             <div className="flex gap-2">
               <div className="space-y-2 flex-1">
                 <Label htmlFor="data">Data</Label>
-                <Input type="date" id="data" value={reservationInfo.data} onChange={(e) => setReservationInfo({ ...reservationInfo, data: e.target.value })} />
+                <Input
+                  type="date"
+                  id="data"
+                  value={reservationInfo.data}
+                  onChange={(e) =>
+                    setReservationInfo({
+                      ...reservationInfo,
+                      data: e.target.value,
+                    })
+                  }
+                />
               </div>
               <div className="space-y-2 flex-1">
                 <Label htmlFor="hora">Hora</Label>
-                <Input type="time" id="hora" value={reservationInfo.hora} onChange={(e) => setReservationInfo({ ...reservationInfo, hora: e.target.value })} />
+                <Input
+                  type="time"
+                  id="hora"
+                  value={reservationInfo.hora}
+                  onChange={(e) =>
+                    setReservationInfo({
+                      ...reservationInfo,
+                      hora: e.target.value,
+                    })
+                  }
+                />
               </div>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setReserveDialog({ open: false, equipmentId: null })}>Cancelar</Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                setReserveDialog({ open: false, equipmentId: null })
+              }
+            >
+              Cancelar
+            </Button>
             <Button onClick={confirmReserve}>Confirmar Reserva</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Remover Equipamentos Dialog */}
-      <Dialog open={removeDialog.open} onOpenChange={(open) => setRemoveDialog({ open, equipmentIds: [] })}>
+      <Dialog
+        open={removeDialog.open}
+        onOpenChange={(open) =>
+          setRemoveDialog({ open, equipmentIds: [] })
+        }
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Remover Equipamentos</DialogTitle>
-            <DialogDescription>Informe os IDs dos equipamentos que deseja remover, separados por vírgula.</DialogDescription>
+            <DialogDescription>
+              Informe os IDs dos equipamentos que deseja remover, separados
+              por vírgula.
+            </DialogDescription>
           </DialogHeader>
           <div className="py-4">
             <Input
               placeholder="Ex: id1,id2,id3"
               value={removeDialog.equipmentIds.join(",")}
-              onChange={(e) => setRemoveDialog({ ...removeDialog, equipmentIds: e.target.value.split(",") })}
+              onChange={(e) =>
+                setRemoveDialog({
+                  ...removeDialog,
+                  equipmentIds: e.target.value.split(","),
+                })
+              }
             />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRemoveDialog({ open: false, equipmentIds: [] })}>Cancelar</Button>
-            <Button variant="destructive" onClick={handleRemoveEquipments}>Remover</Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                setRemoveDialog({ open: false, equipmentIds: [] })
+              }
+            >
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={handleRemoveEquipments}>
+              Remover
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
