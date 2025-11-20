@@ -9,7 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Navigate } from "react-router-dom";
 
 // 🔥 Firebase corrigido
-import { db } from "/src/lib/firebase";
+import { db } from "@/lib/firebase";
 
 import { collection, getDocs, query, orderBy, limit, doc, getDoc } from "firebase/firestore";
 

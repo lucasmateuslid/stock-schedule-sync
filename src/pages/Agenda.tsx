@@ -9,7 +9,7 @@ import { Calendar, Clock } from "lucide-react";
 
 // 🔥 Firebase
 // 🔥 Firebase (corrigido)
-import { db } from "/src/lib/firebase";
+import { db } from "@/lib/firebase";
 import { collection, getDocs, doc, getDoc, orderBy, query } from "firebase/firestore";
 
 interface ReservationInfo {

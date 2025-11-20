@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { db } from "/src/lib/firebase"; // Firestore client corrigido
+import { db } from "@/lib/firebase";
 import {
   collection,
   getDocs,
@@ -10,6 +10,7 @@ import {
   updateDoc,
   deleteDoc,
 } from "firebase/firestore";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { EquipmentCard } from "@/components/equipment/EquipmentCard";
 import { EquipmentFilters } from "@/components/equipment/EquipmentFilters";
@@ -36,15 +37,27 @@ interface ReservationInfo {
   hora: string;
 }
 
+interface Equipment {
+  id: string;
+  imei?: string;
+  iccid?: string;
+  status?: string;
+  empresa?: string;
+  tecnico_id?: string | null;
+  [key: string]: any;
+}
+
+interface Technician {
+  id: string;
+  nome: string;
+  [key: string]: any;
+}
+
 export default function Equipamentos() {
-  const [equipments, setEquipments] = useState<any[]>([]);
-  const [filteredEquipments, setFilteredEquipments] = useState<any[]>([]);
-  const [technicians, setTechnicians] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [empresaFilter, setEmpresaFilter] = useState("all");
-  const [tecnicoFilter, setTecnicoFilter] = useState("all");
+  const [tecnicoFilter, setTecnicoFilter] = useState<string | "all">("all");
   const [reserveDialog, setReserveDialog] = useState<{
     open: boolean;
     equipmentId: string | null;
@@ -65,152 +78,56 @@ export default function Equipamentos() {
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    filterEquipments();
-  }, [equipments, search, statusFilter, empresaFilter, tecnicoFilter]);
+  // Fetch technicians
+  const {
+    data: technicians = [],
+    isLoading: techLoading,
+    isError: techError,
+  } = useQuery<Technician[]>({
+    queryKey: ["technicians"],
+    queryFn: async () => {
+      const q = query(collection(db, "technicians"), orderBy("nome"));
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+    },
+  });
 
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      // Buscar técnicos
-      const techSnapshot = await getDocs(
-        query(collection(db, "technicians"), orderBy("nome"))
-      );
-      const techData = techSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setTechnicians(techData);
+  // Fetch equipments
+  const {
+    data: equipments = [],
+    isLoading: eqLoading,
+    isError: eqError,
+  } = useQuery<Equipment[]>({
+    queryKey: ["equipments"],
+    queryFn: async () => {
+      const q = query(collection(db, "equipments"), orderBy("created_at", "desc"));
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+    },
+  });
 
-      // Buscar equipamentos
-      const equipSnapshot = await getDocs(
-        query(collection(db, "equipments"), orderBy("created_at", "desc"))
-      );
-      const equipData = equipSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setEquipments(equipData);
-    } catch (error) {
-      console.error("Error fetching data:", error);
-      toast({
-        variant: "destructive",
-        title: "Erro ao carregar dados",
-        description: "Tente novamente mais tarde",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const loading = techLoading || eqLoading;
 
-  const filterEquipments = () => {
-    let filtered = equipments;
-    if (search)
-      filtered = filtered.filter(
-        (e) =>
-          e.imei?.toLowerCase().includes(search.toLowerCase()) ||
-          e.iccid?.toLowerCase().includes(search.toLowerCase())
-      );
-    if (statusFilter !== "all")
-      filtered = filtered.filter((e) => e.status === statusFilter);
-    if (empresaFilter !== "all")
-      filtered = filtered.filter((e) => e.empresa === empresaFilter);
-    if (tecnicoFilter !== "all")
-      filtered = filtered.filter((e) => e.tecnico_id === tecnicoFilter);
+  // Mutations
+  const reserveMutation = useMutation({
+    mutationFn: async ({ id, payload }: { id: string; payload: Partial<Equipment> }) =>
+      updateDoc(doc(db, "equipments", id), payload),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["equipments"] }),
+    onError: (err) => console.error("reserveMutation error:", err),
+  });
 
-    setFilteredEquipments(filtered);
-  };
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => deleteDoc(doc(db, "equipments", id)),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["equipments"] }),
+    onError: (err) => console.error("deleteMutation error:", err),
+  });
 
-  const handleReserve = (equipmentId: string) => {
-    setReserveDialog({ open: true, equipmentId });
-    setReservationInfo({
-      name: "",
-      placa: "",
-      associado: "",
-      data: "",
-      hora: "",
-    });
-  };
-
-  const confirmReserve = async () => {
-    const { name, placa, associado, data, hora } = reservationInfo;
-    if (!reserveDialog.equipmentId) return;
-    if (!name || !placa || !associado || !data || !hora) {
-      toast({
-        variant: "destructive",
-        title: "Campos obrigatórios",
-        description: "Preencha todos os campos para reservar",
-      });
-      return;
-    }
-
-    try {
-      const equipmentRef = doc(db, "equipments", reserveDialog.equipmentId);
-      await updateDoc(equipmentRef, {
-        status: "reservado",
-        reservado_por: name.trim(),
-        placa,
-        associado,
-        data_reserva: `${data}T${hora}:00`,
-      });
-
-      toast({
-        title: "Equipamento reservado",
-        description: "A reserva foi registrada com sucesso",
-      });
-      setReserveDialog({ open: false, equipmentId: null });
-      setReservationInfo({
-        name: "",
-        placa: "",
-        associado: "",
-        data: "",
-        hora: "",
-      });
-      fetchData();
-
-      navigate("/agendamento", {
-        state: { equipmentId: reserveDialog.equipmentId, reservation: reservationInfo },
-      });
-    } catch (error) {
-      console.error("Error reserving equipment:", error);
-      toast({
-        variant: "destructive",
-        title: "Erro ao reservar",
-        description: "Tente novamente mais tarde",
-      });
-    }
-  };
-
-  const handleRelease = async (equipmentId: string) => {
-    try {
-      const equipmentRef = doc(db, "equipments", equipmentId);
-      await updateDoc(equipmentRef, {
-        status: "disponivel",
-        reservado_por: null,
-        placa: null,
-        associado: null,
-        data_reserva: null,
-      });
-      toast({ title: "Equipamento liberado" });
-      fetchData();
-    } catch (error) {
-      console.error("Error releasing equipment:", error);
-      toast({
-        variant: "destructive",
-        title: "Erro ao liberar",
-        description: "Tente novamente mais tarde",
-      });
-    }
-  };
-
-  const handleClearSelection = async () => {
-    try {
-      const equipSnapshot = await getDocs(collection(db, "equipments"));
-      const batchPromises = equipSnapshot.docs.map((d) =>
+  const clearAllMutation = useMutation({
+    mutationFn: async () => {
+      const snap = await getDocs(collection(db, "equipments"));
+      const promises = snap.docs.map((d) =>
         updateDoc(d.ref, {
           status: "disponivel",
           reservado_por: null,
@@ -219,28 +136,105 @@ export default function Equipamentos() {
           data_reserva: null,
         })
       );
-      await Promise.all(batchPromises);
+      await Promise.all(promises);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["equipments"] }),
+    onError: (err) => console.error("clearAllMutation error:", err),
+  });
+
+  // Memoized filtered list
+  const filteredEquipments = useMemo(() => {
+    const s = (search || "").trim().toLowerCase();
+    return (equipments || []).filter((e) => {
+      if (s) {
+        const inImei = !!e.imei && e.imei.toLowerCase().includes(s);
+        const inIccid = !!e.iccid && e.iccid.toLowerCase().includes(s);
+        if (!inImei && !inIccid) return false;
+      }
+      if (statusFilter !== "all" && e.status !== statusFilter) return false;
+      if (empresaFilter !== "all" && e.empresa !== empresaFilter) return false;
+      if (tecnicoFilter !== "all" && e.tecnico_id !== tecnicoFilter) return false;
+      return true;
+    });
+  }, [equipments, search, statusFilter, empresaFilter, tecnicoFilter]);
+
+  const handleReserve = useCallback((equipmentId: string) => {
+    setReserveDialog({ open: true, equipmentId });
+    setReservationInfo({ name: "", placa: "", associado: "", data: "", hora: "" });
+  }, []);
+
+  const confirmReserve = useCallback(async () => {
+    const { name, placa, associado, data, hora } = reservationInfo;
+    if (!reserveDialog.equipmentId) return;
+    if (!name || !placa || !associado || !data || !hora) {
+      toast({ variant: "destructive", title: "Campos obrigatórios", description: "Preencha todos os campos para reservar" });
+      return;
+    }
+
+    try {
+      await reserveMutation.mutateAsync({
+        id: reserveDialog.equipmentId,
+        payload: {
+          status: "reservado",
+          reservado_por: name.trim(),
+          placa,
+          associado,
+          data_reserva: `${data}T${hora}:00`,
+        },
+      });
+
+      toast({ title: "Equipamento reservado", description: "A reserva foi registrada com sucesso" });
+      setReserveDialog({ open: false, equipmentId: null });
+      setReservationInfo({ name: "", placa: "", associado: "", data: "", hora: "" });
+
+      navigate("/agendamento", { state: { equipmentId: reserveDialog.equipmentId, reservation: reservationInfo } });
+    } catch (error) {
+      console.error("Error reserving equipment:", error);
+      toast({ variant: "destructive", title: "Erro ao reservar", description: "Tente novamente mais tarde" });
+    }
+  }, [reserveDialog, reservationInfo, reserveMutation, navigate, toast]);
+
+  const handleRelease = useCallback(async (equipmentId: string) => {
+    try {
+      await reserveMutation.mutateAsync({ id: equipmentId, payload: { status: "disponivel", reservado_por: null, placa: null, associado: null, data_reserva: null } });
+      toast({ title: "Equipamento liberado" });
+    } catch (error) {
+      console.error("Error releasing equipment:", error);
+      toast({ variant: "destructive", title: "Erro ao liberar", description: "Tente novamente mais tarde" });
+    }
+  }, [reserveMutation, toast]);
+
+  const handleMarkUsed = useCallback(async (equipmentId: string) => {
+    try {
+      await reserveMutation.mutateAsync({ id: equipmentId, payload: { status: "utilizado" } });
+      toast({ title: "Equipamento marcado como utilizado" });
+    } catch (error) {
+      console.error("Error marking equipment used:", error);
+      toast({ variant: "destructive", title: "Erro", description: "Não foi possível marcar como utilizado" });
+    }
+  }, [reserveMutation, toast]);
+
+  const handleClearSelection = useCallback(async () => {
+    try {
+      await clearAllMutation.mutateAsync();
       toast({ title: "Todas as reservas foram removidas" });
-      fetchData();
     } catch (error) {
       console.error("Error clearing selection:", error);
+      toast({ variant: "destructive", title: "Erro", description: "Não foi possível limpar reservas" });
     }
-  };
+  }, [clearAllMutation, toast]);
 
-  const handleRemoveEquipments = async () => {
+  const handleRemoveEquipments = useCallback(async () => {
     try {
       if (removeDialog.equipmentIds.length === 0) return;
-      const batchPromises = removeDialog.equipmentIds.map((id) =>
-        deleteDoc(doc(db, "equipments", id))
-      );
-      await Promise.all(batchPromises);
+      await Promise.all(removeDialog.equipmentIds.map((id) => deleteMutation.mutateAsync(id)));
       toast({ title: "Equipamentos removidos com sucesso" });
       setRemoveDialog({ open: false, equipmentIds: [] });
-      fetchData();
     } catch (error) {
       console.error("Error removing equipments:", error);
+      toast({ variant: "destructive", title: "Erro", description: "Não foi possível remover equipamentos" });
     }
-  };
+  }, [removeDialog, deleteMutation, toast]);
 
   return (
     <AppLayout>
@@ -295,17 +289,11 @@ export default function Equipamentos() {
             {filteredEquipments.map((equipment) => (
               <EquipmentCard
                 key={equipment.id}
-                equipment={equipment}
+                equipment={equipment as any}
                 onReserve={handleReserve}
                 onRelease={handleRelease}
+                onMarkUsed={handleMarkUsed}
                 isAdmin={isAdmin}
-                cardStatusColor={
-                  equipment.status === "reservado"
-                    ? "bg-yellow-300"
-                    : equipment.empresa === "ALO"
-                    ? "bg-green-900 text-white"
-                    : undefined
-                }
               />
             ))}
           </div>

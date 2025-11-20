@@ -1,21 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-
-// Firebase
-import { auth, db } from "/src/lib/firebase";
-import {
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  onAuthStateChanged,
-} from "firebase/auth";
-import {
-  collection,
-  query,
-  where,
-  getDocs,
-  setDoc,
-  doc,
-} from "firebase/firestore";
+import { useAuth } from "@/contexts/AuthContext";
 
 // UI
 import { Button } from "@/components/ui/button";
@@ -34,24 +19,20 @@ import { Package } from "lucide-react";
 
 export default function Auth() {
   // Form states
-  const [login, setLogin] = useState(""); // Login pode ser username ou email
+  const [email, setEmail] = useState("");
   const [nome, setNome] = useState("");
-  const [username, setUsername] = useState("");
-  const [email, setEmail] = useState(""); 
   const [password, setPassword] = useState("");
 
   const [loading, setLoading] = useState(false);
 
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { signIn, signUp, signInWithGoogle, user } = useAuth();
 
   // Se já estiver logado → redireciona automaticamente
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      if (user) navigate("/dashboard");
-    });
-    return () => unsub();
-  }, [navigate]);
+    if (user) navigate("/dashboard");
+  }, [user, navigate]);
 
   // -----------------------------
   // 🔐 LOGIN
@@ -61,31 +42,12 @@ export default function Auth() {
     setLoading(true);
 
     try {
-      if (!login.trim() || !password.trim()) {
-        throw new Error("Preencha login e senha.");
+      if (!email.trim() || !password.trim()) {
+        throw new Error("Preencha email e senha.");
       }
 
-      let resolvedEmail = login.trim();
-
-      // Se NÃO tiver @ → login é username
-      if (!resolvedEmail.includes("@")) {
-        const q = query(
-          collection(db, "users"),
-          where("username", "==", resolvedEmail)
-        );
-        const result = await getDocs(q);
-
-        if (result.empty) {
-          throw new Error("Usuário não encontrado.");
-        }
-
-        resolvedEmail = result.docs[0].data().email;
-      }
-
-      // Login efetivo
-      await signInWithEmailAndPassword(auth, resolvedEmail, password);
-
-      navigate("/dashboard");
+      await signIn(email.trim(), password);
+      // signIn já navega para /dashboard
     } catch (err: any) {
       toast({
         variant: "destructive",
@@ -105,41 +67,16 @@ export default function Auth() {
     setLoading(true);
 
     try {
-      if (!nome.trim() || !username.trim() || !email.trim() || !password.trim()) {
+      if (!nome.trim() || !email.trim() || !password.trim()) {
         throw new Error("Preencha todos os campos.");
       }
 
-      // Cria usuário no Firebase Auth
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
-        email,
-        password
-      );
-
-      const uid = userCredential.user.uid;
-
-      // Define papel inicial (admin apenas para usuário autorizado)
-      const role = email.toLowerCase() === "lucasmateus.lima@outlook.com"
-        ? "admin"
-        : "consultor";
-
-      // Cria documento do Firestore
-      await setDoc(doc(db, "users", uid), {
-        id: uid,
-        email,
-        username,
-        nome,
-        role,
-        created_at: new Date(),
-      });
-
+      await signUp(nome.trim(), email.trim(), password);
       toast({
         title: "Conta criada com sucesso!",
         description: "Você já pode acessar o sistema.",
       });
-
-      navigate("/dashboard");
-
+      // signUp já navega para /dashboard
     } catch (err: any) {
       toast({
         variant: "destructive",
@@ -178,11 +115,12 @@ export default function Auth() {
               <form onSubmit={handleSignIn} className="space-y-4">
 
                 <div className="space-y-2">
-                  <Label>Usuário ou Email</Label>
+                  <Label>Email</Label>
                   <Input
-                    placeholder="seu.username ou email"
-                    value={login}
-                    onChange={(e) => setLogin(e.target.value)}
+                    type="email"
+                    placeholder="email@exemplo.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
                   />
                 </div>
 
@@ -200,6 +138,29 @@ export default function Auth() {
                   {loading ? "Entrando..." : "Entrar"}
                 </Button>
 
+                <div className="pt-2">
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={async () => {
+                      setLoading(true);
+                      try {
+                        await signInWithGoogle();
+                      } catch (err: any) {
+                        toast({
+                          variant: "destructive",
+                          title: "Erro ao entrar com Google",
+                          description: err?.message || "Erro inesperado.",
+                        });
+                      } finally {
+                        setLoading(false);
+                      }
+                    }}
+                  >
+                    {loading ? "Entrando..." : "Entrar com Google"}
+                  </Button>
+                </div>
+
               </form>
             </TabsContent>
 
@@ -216,14 +177,7 @@ export default function Auth() {
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <Label>Nome de Usuário</Label>
-                  <Input
-                    placeholder="seu.username"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                  />
-                </div>
+                {/* username removido — cadastro agora usa apenas nome, email e senha */}
 
                 <div className="space-y-2">
                   <Label>Email</Label>
@@ -250,6 +204,7 @@ export default function Auth() {
                 <Button disabled={loading} type="submit" className="w-full">
                   {loading ? "Criando conta..." : "Criar Conta"}
                 </Button>
+
 
               </form>
             </TabsContent>

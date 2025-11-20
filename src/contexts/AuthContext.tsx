@@ -15,6 +15,8 @@ import {
   createUserWithEmailAndPassword,
   signOut as firebaseSignOut,
   onAuthStateChanged,
+  GoogleAuthProvider,
+  signInWithPopup,
 } from "firebase/auth";
 
 import {
@@ -30,7 +32,7 @@ import {
 interface Profile {
   id: string;
   email: string;
-  username: string;
+  username?: string;
   nome: string;
   role: "admin" | "consultor";
   created_at: Date;
@@ -44,10 +46,10 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (
     nome: string,
-    username: string,
     email: string,
     password: string
   ) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -62,7 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
 
   /* ----------------------------------------------------------------------------
-   * OBSERVA AUTOMATICAMENTE LOGIN / LOGOUT
+   * Observa login / logout
    * --------------------------------------------------------------------------*/
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -80,61 +82,68 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /* ----------------------------------------------------------------------------
-   * BUSCA O PERFIL DO FIRESTORE (COM FALLBACK REAL PARA CACHE)
+   * Busca de perfil — cache-first + server update
    * --------------------------------------------------------------------------*/
   const fetchProfile = async (uid: string) => {
+    setLoading(true);
+
     try {
       const docRef = doc(db, "users", uid);
 
-      let snap;
-
+      // 1 — TENTAR CACHE (instantâneo)
+      let cacheSnap = null;
       try {
-        // tenta servidor normalmente
-        snap = await getDoc(docRef);
-      } catch (e) {
-        console.warn("Servidor offline, tentando cache…");
-        try {
-          // fallback real
-          snap = await getDocFromCache(docRef);
-        } catch {
-          console.error("Nem servidor nem cache funcionaram.");
-          return;
-        }
+        cacheSnap = await getDocFromCache(docRef);
+      } catch {
+        cacheSnap = null;
       }
 
-      if (!snap.exists()) return;
+      if (cacheSnap?.exists()) {
+        const data = cacheSnap.data();
+        setProfile({
+          id: data.id,
+          email: data.email,
+          username: data.username,
+          nome: data.nome,
+          role: data.role,
+          created_at: data.created_at?.toDate?.() || new Date(),
+        });
+      }
 
-      const data = snap.data();
+      // 2 — BUSCAR DO SERVIDOR (não força mais "server: only")
+      const serverSnap = await getDoc(docRef);
 
-      setProfile({
-        id: data.id,
-        email: data.email,
-        username: data.username,
-        nome: data.nome,
-        role: data.role,
-        created_at: data.created_at?.toDate?.() || new Date(),
-      });
-    } catch (err) {
-      console.error("Erro ao buscar perfil:", err);
+      if (serverSnap.exists()) {
+        const data = serverSnap.data();
+        setProfile({
+          id: data.id,
+          email: data.email,
+          username: data.username,
+          nome: data.nome,
+          role: data.role,
+          created_at: data.created_at?.toDate?.() || new Date(),
+        });
+      } else if (!cacheSnap) {
+        setProfile(null);
+      }
+    } catch (error) {
+      console.warn("Erro buscando perfil (cache/server):", error);
+      // Se falhou mas tinha cache → mantém perfil do cache
+      // Se falhou e não tinha cache → seta null
+      if (!profile) setProfile(null);
     } finally {
       setLoading(false);
     }
   };
 
   /* ----------------------------------------------------------------------------
-   * LOGIN
+   * Login
    * --------------------------------------------------------------------------*/
   const signIn = async (email: string, password: string) => {
     setLoading(true);
     try {
-      const credential = await signInWithEmailAndPassword(
-        auth,
-        email,
-        password
-      );
-
+      const credential = await signInWithEmailAndPassword(auth, email, password);
       await fetchProfile(credential.user.uid);
-
       navigate("/dashboard");
     } catch (err) {
       console.error("Login error:", err);
@@ -145,14 +154,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   /* ----------------------------------------------------------------------------
-   * CADASTRO (admin tem delay de 1500ms para garantir gravação)
+   * Login com Google
    * --------------------------------------------------------------------------*/
-  const signUp = async (
-    nome: string,
-    username: string,
-    email: string,
-    password: string
-  ) => {
+  const signInWithGoogle = async () => {
+    setLoading(true);
+    try {
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+
+      const user = result.user;
+      if (!user) throw new Error("Erro no login com Google");
+
+      const uid = user.uid;
+      const userRef = doc(db, "users", uid);
+
+      const snap = await getDoc(userRef);
+
+      if (!snap.exists()) {
+        const email = user.email || "";
+        const nome = user.displayName || "Usuário";
+        const isAdmin = email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+
+        await setDoc(
+          userRef,
+          {
+            id: uid,
+            email,
+            nome,
+            role: isAdmin ? "admin" : "consultor",
+            created_at: new Date(),
+          },
+          { merge: true }
+        );
+      }
+
+      await fetchProfile(uid);
+      navigate("/dashboard");
+    } catch (err) {
+      console.error("Google sign-in error:", err);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /* ----------------------------------------------------------------------------
+   * Cadastro
+   * --------------------------------------------------------------------------*/
+  const signUp = async (nome: string, email: string, password: string) => {
     setLoading(true);
 
     try {
@@ -165,18 +214,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const uid = userCredential.user.uid;
 
       const isAdmin = email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
-      const role: "admin" | "consultor" = isAdmin ? "admin" : "consultor";
-
-      if (isAdmin) {
-        await new Promise((resolve) => setTimeout(resolve, 1500)); // delay admin
-      }
 
       await setDoc(doc(db, "users", uid), {
         id: uid,
         email,
-        username,
         nome,
-        role,
+        role: isAdmin ? "admin" : "consultor",
         created_at: new Date(),
       });
 
@@ -191,7 +234,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   /* ----------------------------------------------------------------------------
-   * LOGOUT
+   * Logout
    * --------------------------------------------------------------------------*/
   const signOut = async () => {
     setLoading(true);
@@ -218,6 +261,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAdmin,
         signIn,
         signUp,
+        signInWithGoogle,
         signOut,
       }}
     >

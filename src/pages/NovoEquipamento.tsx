@@ -23,7 +23,7 @@ import {
   orderBy,
 } from "firebase/firestore";
 
-import { db } from "/src/lib/firebase";
+import { db } from "@/lib/firebase";
 
 export default function NovoEquipamento() {
   const navigate = useNavigate();

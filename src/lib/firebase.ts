@@ -1,6 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { enableIndexedDbPersistence } from "firebase/firestore";
 
 console.log("ENV DEBUG:", {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -26,6 +27,20 @@ const app = initializeApp(firebaseConfig);
 // Auth + Firestore
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+
+// Habilita persistência offline (IndexedDB) para Firestore
+if (typeof window !== "undefined") {
+  enableIndexedDbPersistence(db).catch((err) => {
+    // Erros comuns: failed-precondition (múltiplas abas) ou unimplemented (browser não suportado)
+    if (err.code === "failed-precondition") {
+      console.warn("Firestore persistence: falhou por múltiplas abas abertas.");
+    } else if (err.code === "unimplemented") {
+      console.warn("Firestore persistence não suportada neste navegador.");
+    } else {
+      console.warn("Erro ao habilitar persistência do Firestore:", err);
+    }
+  });
+}
 
 // Analytics (opcional) – sem await no topo e sem travar Firestore
 export let analytics: any = null;

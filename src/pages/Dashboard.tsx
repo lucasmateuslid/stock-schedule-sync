@@ -5,7 +5,7 @@ import { Package, CheckCircle, Clock, AlertCircle } from "lucide-react";
 
 import { collection, getDocs } from "firebase/firestore";
 // 🔥 Firebase (corrigido)
-import { db } from "/src/lib/firebase";
+import { db } from "@/lib/firebase";
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
