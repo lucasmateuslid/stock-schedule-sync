@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Package, CheckCircle, Clock, AlertCircle } from "lucide-react";
+
+import { collection, getDocs } from "firebase/firestore";
+import { db } from "@/firebase"; // ⬅️ importa seu firebase
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -11,6 +13,7 @@ export default function Dashboard() {
     reservado: 0,
     utilizado: 0,
   });
+
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -19,22 +22,24 @@ export default function Dashboard() {
 
   const fetchStats = async () => {
     try {
-      const { data, error } = await supabase
-        .from("equipments")
-        .select("status");
+      // Busca os documentos da coleção `equipments` no Firestore
+      const querySnapshot = await getDocs(collection(db, "equipments"));
 
-      if (error) throw error;
+      const equipamentos = querySnapshot.docs.map((doc) => doc.data());
 
-      const stats = {
-        total: data?.length || 0,
-        disponivel: data?.filter((e) => e.status === "disponivel").length || 0,
-        reservado: data?.filter((e) => e.status === "reservado").length || 0,
-        utilizado: data?.filter((e) => e.status === "utilizado").length || 0,
+      const computedStats = {
+        total: equipamentos.length || 0,
+        disponivel:
+          equipamentos.filter((e) => e.status === "disponivel").length || 0,
+        reservado:
+          equipamentos.filter((e) => e.status === "reservado").length || 0,
+        utilizado:
+          equipamentos.filter((e) => e.status === "utilizado").length || 0,
       };
 
-      setStats(stats);
+      setStats(computedStats);
     } catch (error) {
-      console.error("Error fetching stats:", error);
+      console.error("Erro ao buscar estatísticas:", error);
     } finally {
       setLoading(false);
     }
@@ -99,7 +104,10 @@ export default function Dashboard() {
             {statCards.map((stat) => {
               const Icon = stat.icon;
               return (
-                <Card key={stat.title} className="hover:shadow-lg transition-shadow duration-base">
+                <Card
+                  key={stat.title}
+                  className="hover:shadow-lg transition-shadow duration-base"
+                >
                   <CardHeader className="flex flex-row items-center justify-between pb-2">
                     <CardTitle className="text-sm font-medium text-muted-foreground">
                       {stat.title}

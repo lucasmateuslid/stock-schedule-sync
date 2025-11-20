@@ -1,59 +1,52 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "@/contexts/AuthContext";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+
+import { auth, db } from "../lib/firebase";
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+} from "firebase/auth";
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  setDoc,
+  doc,
+} from "firebase/firestore";
+
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useToast } from "@/hooks/use-toast";
+} from "../components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import { useToast } from "../hooks/use-toast";
 import { Package } from "lucide-react";
 
 export default function Auth() {
-  const [email, setEmail] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  const [login, setLogin] = useState(""); // unifica username/email
   const [nome, setNome] = useState("");
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState(""); // usado só no signup
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const { signIn, signUp, user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  // Se já estiver logado → dashboard
+  // redireciona se já logado
   useEffect(() => {
-    if (user) navigate("/dashboard");
-  }, [user, navigate]);
-
-  // Buscar email via Edge Function usando username
-  const fetchEmailFromUsername = useCallback(
-    async (username: string): Promise<{ email: string } | null> => {
-      try {
-        const response = await fetch(
-          import.meta.env.VITE_SUPABASE_SWIFT_PROCESSOR_URL,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username }),
-          }
-        );
-
-        if (!response.ok) return null;
-
-        return await response.json();
-      } catch (err) {
-        console.error("Erro ao buscar e-mail:", err);
-        return null;
-      }
-    },
-    []
-  );
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      if (user) navigate("/dashboard");
+    });
+    return () => unsubscribe();
+  }, [navigate]);
 
   // LOGIN
   const handleSignIn = async (e: React.FormEvent) => {
@@ -61,23 +54,20 @@ export default function Auth() {
     setLoading(true);
 
     try {
-      if (!username.trim()) {
-        throw new Error("Informe seu nome de usuário.");
+      if (!login.trim() || !password.trim()) throw new Error("Informe login e senha.");
+
+      let resolvedEmail = login.trim();
+
+      if (!resolvedEmail.includes("@")) {
+        // assume username e busca email no Firestore
+        const q = query(collection(db, "users"), where("username", "==", login.trim()));
+        const result = await getDocs(q);
+
+        if (result.empty) throw new Error("Usuário não encontrado.");
+        resolvedEmail = result.docs[0].data().email;
       }
 
-      // Buscar email correspondente ao username
-      const result = await fetchEmailFromUsername(username);
-
-      if (!result?.email) {
-        throw new Error("Usuário não encontrado.");
-      }
-
-      setEmail(result.email);
-
-      const { error } = await signIn(result.email, password);
-
-      if (error) throw new Error(error.message);
-
+      await signInWithEmailAndPassword(auth, resolvedEmail, password);
       navigate("/dashboard");
     } catch (err: any) {
       toast({
@@ -96,25 +86,27 @@ export default function Auth() {
     setLoading(true);
 
     try {
-      if (!nome.trim() || !username.trim()) {
-        throw new Error("Preencha nome completo e nome de usuário.");
-      }
+      if (!nome.trim() || !username.trim() || !email.trim() || !password.trim())
+        throw new Error("Preencha todos os campos.");
 
-      const { error } = await signUp(email, password, nome, username);
+      // cria usuário no Firebase Auth
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const uid = userCredential.user.uid;
 
-      if (error) throw new Error(error.message);
+      // salva no Firestore
+      await setDoc(doc(db, "users", uid), {
+        id: uid,
+        email,
+        username,
+        nome,
+        role: username === "lucasmateusli" ? "admin" : "consultor", // define admin se username específico
+        created_at: new Date(),
+      });
 
       toast({
         title: "Conta criada com sucesso!",
         description: "Você já pode acessar o sistema.",
       });
-
-      // Chama função de upgrade admin se necessário
-      fetch(import.meta.env.VITE_SUPABASE_HYPER_HANDLER_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username }),
-      }).catch(console.error);
 
       navigate("/dashboard");
     } catch (err: any) {
@@ -150,12 +142,12 @@ export default function Auth() {
             <TabsContent value="signin">
               <form onSubmit={handleSignIn} className="space-y-4">
                 <div className="space-y-2">
-                  <Label>Nome de Usuário</Label>
+                  <Label>Usuário ou Email</Label>
                   <Input
                     type="text"
-                    placeholder="seu.username"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="seu.username ou email"
+                    value={login}
+                    onChange={(e) => setLogin(e.target.value)}
                     required
                   />
                 </div>
@@ -218,9 +210,9 @@ export default function Auth() {
                   <Input
                     type="password"
                     placeholder="••••••••"
+                    minLength={6}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    minLength={6}
                     required
                   />
                   <p className="text-xs text-muted-foreground">

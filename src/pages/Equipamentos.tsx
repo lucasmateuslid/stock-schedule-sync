@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { firebaseDb } from "@/integrations/firebaseClient"; // Firestore client
+import { collection, getDocs, query, orderBy, doc, updateDoc, deleteDoc } from "firebase/firestore";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { EquipmentCard } from "@/components/equipment/EquipmentCard";
 import { EquipmentFilters } from "@/components/equipment/EquipmentFilters";
@@ -18,7 +19,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface ReservationInfo {
   name: string;
@@ -37,21 +37,9 @@ export default function Equipamentos() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [empresaFilter, setEmpresaFilter] = useState("all");
   const [tecnicoFilter, setTecnicoFilter] = useState("all");
-  const [reserveDialog, setReserveDialog] = useState<{ open: boolean; equipmentId: string | null }>({
-    open: false,
-    equipmentId: null,
-  });
-  const [reservationInfo, setReservationInfo] = useState<ReservationInfo>({
-    name: "",
-    placa: "",
-    associado: "",
-    data: "",
-    hora: "",
-  });
-  const [removeDialog, setRemoveDialog] = useState<{ open: boolean; equipmentIds: string[] }>({
-    open: false,
-    equipmentIds: [],
-  });
+  const [reserveDialog, setReserveDialog] = useState<{ open: boolean; equipmentId: string | null }>({ open: false, equipmentId: null });
+  const [reservationInfo, setReservationInfo] = useState<ReservationInfo>({ name: "", placa: "", associado: "", data: "", hora: "" });
+  const [removeDialog, setRemoveDialog] = useState<{ open: boolean; equipmentIds: string[] }>({ open: false, equipmentIds: [] });
 
   const { isAdmin } = useAuth();
   const { toast } = useToast();
@@ -66,24 +54,20 @@ export default function Equipamentos() {
   }, [equipments, search, statusFilter, empresaFilter, tecnicoFilter]);
 
   const fetchData = async () => {
+    setLoading(true);
     try {
-      const { data: techData } = await supabase.from("technicians").select("*").order("nome");
-      setTechnicians(techData || []);
+      // Buscar técnicos
+      const techSnapshot = await getDocs(query(collection(firebaseDb, "technicians"), orderBy("nome")));
+      const techData = techSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      setTechnicians(techData);
 
-      const { data: equipData, error } = await supabase
-        .from("equipments")
-        .select(`*, technician:technicians(nome)`)
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-      setEquipments(equipData || []);
+      // Buscar equipamentos
+      const equipSnapshot = await getDocs(query(collection(firebaseDb, "equipments"), orderBy("created_at", "desc")));
+      const equipData = equipSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      setEquipments(equipData);
     } catch (error) {
       console.error("Error fetching data:", error);
-      toast({
-        variant: "destructive",
-        title: "Erro ao carregar dados",
-        description: "Tente novamente mais tarde",
-      });
+      toast({ variant: "destructive", title: "Erro ao carregar dados", description: "Tente novamente mais tarde" });
     } finally {
       setLoading(false);
     }
@@ -94,8 +78,8 @@ export default function Equipamentos() {
     if (search)
       filtered = filtered.filter(
         (e) =>
-          e.imei.toLowerCase().includes(search.toLowerCase()) ||
-          e.iccid.toLowerCase().includes(search.toLowerCase())
+          e.imei?.toLowerCase().includes(search.toLowerCase()) ||
+          e.iccid?.toLowerCase().includes(search.toLowerCase())
       );
     if (statusFilter !== "all") filtered = filtered.filter((e) => e.status === statusFilter);
     if (empresaFilter !== "all") filtered = filtered.filter((e) => e.empresa === empresaFilter);
@@ -111,84 +95,57 @@ export default function Equipamentos() {
 
   const confirmReserve = async () => {
     const { name, placa, associado, data, hora } = reservationInfo;
-
-    if (!name.trim() || !placa.trim() || !associado.trim() || !data.trim() || !hora.trim()) {
-      toast({
-        variant: "destructive",
-        title: "Campos obrigatórios",
-        description: "Preencha todos os campos para reservar",
-      });
+    if (!reserveDialog.equipmentId) return;
+    if (!name || !placa || !associado || !data || !hora) {
+      toast({ variant: "destructive", title: "Campos obrigatórios", description: "Preencha todos os campos para reservar" });
       return;
     }
 
-    if (!reserveDialog.equipmentId) return;
-
     try {
-      const now = new Date().toISOString();
-      const { error } = await supabase
-        .from("equipments")
-        .update({
-          status: "reservado",
-          reservado_por: name.trim(),
-          placa,
-          associado,
-          data_reserva: `${data}T${hora}:00`,
-        })
-        .eq("id", reserveDialog.equipmentId);
-
-      if (error) throw error;
-
-      toast({
-        title: "Equipamento reservado",
-        description: "A reserva foi registrada com sucesso",
+      const equipmentRef = doc(firebaseDb, "equipments", reserveDialog.equipmentId);
+      await updateDoc(equipmentRef, {
+        status: "reservado",
+        reservado_por: name.trim(),
+        placa,
+        associado,
+        data_reserva: `${data}T${hora}:00`,
       });
 
+      toast({ title: "Equipamento reservado", description: "A reserva foi registrada com sucesso" });
       setReserveDialog({ open: false, equipmentId: null });
       setReservationInfo({ name: "", placa: "", associado: "", data: "", hora: "" });
       fetchData();
 
-      // enviar para página de agendamento
       navigate("/agendamento", { state: { equipmentId: reserveDialog.equipmentId, reservation: reservationInfo } });
     } catch (error) {
       console.error("Error reserving equipment:", error);
-      toast({
-        variant: "destructive",
-        title: "Erro ao reservar",
-        description: "Tente novamente mais tarde",
-      });
+      toast({ variant: "destructive", title: "Erro ao reservar", description: "Tente novamente mais tarde" });
     }
   };
 
   const handleRelease = async (equipmentId: string) => {
     try {
-      const { error } = await supabase
-        .from("equipments")
-        .update({
-          status: "disponivel",
-          reservado_por: null,
-          placa: null,
-          associado: null,
-          data_reserva: null,
-        })
-        .eq("id", equipmentId);
-
-      if (error) throw error;
+      const equipmentRef = doc(firebaseDb, "equipments", equipmentId);
+      await updateDoc(equipmentRef, {
+        status: "disponivel",
+        reservado_por: null,
+        placa: null,
+        associado: null,
+        data_reserva: null,
+      });
       toast({ title: "Equipamento liberado" });
       fetchData();
     } catch (error) {
       console.error("Error releasing equipment:", error);
-      toast({
-        variant: "destructive",
-        title: "Erro ao liberar",
-        description: "Tente novamente mais tarde",
-      });
+      toast({ variant: "destructive", title: "Erro ao liberar", description: "Tente novamente mais tarde" });
     }
   };
 
   const handleClearSelection = async () => {
     try {
-      const { error } = await supabase.from("equipments").update({ status: "disponivel", reservado_por: null, placa: null, associado: null, data_reserva: null });
-      if (error) throw error;
+      const equipSnapshot = await getDocs(collection(firebaseDb, "equipments"));
+      const batchPromises = equipSnapshot.docs.map((d) => updateDoc(d.ref, { status: "disponivel", reservado_por: null, placa: null, associado: null, data_reserva: null }));
+      await Promise.all(batchPromises);
       toast({ title: "Todas as reservas foram removidas" });
       fetchData();
     } catch (error) {
@@ -199,8 +156,8 @@ export default function Equipamentos() {
   const handleRemoveEquipments = async () => {
     try {
       if (removeDialog.equipmentIds.length === 0) return;
-      const { error } = await supabase.from("equipments").delete().in("id", removeDialog.equipmentIds);
-      if (error) throw error;
+      const batchPromises = removeDialog.equipmentIds.map((id) => deleteDoc(doc(firebaseDb, "equipments", id)));
+      await Promise.all(batchPromises);
       toast({ title: "Equipamentos removidos com sucesso" });
       setRemoveDialog({ open: false, equipmentIds: [] });
       fetchData();
